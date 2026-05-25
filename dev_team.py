@@ -424,10 +424,38 @@ def handle_document(message):
         bot.reply_to(message, "⚠️ Файл слишком большой. Максимум 500 КБ.")
         return
 
-    caption = (message.caption or "").strip().lower()
-    if "улучши" in caption or "improve" in caption:
+    caption = (message.caption or "").strip()
+    caption_lower = caption.lower()
+
+    # Если есть текст под файлом — передаём файл + задачу в пайплайн
+    if caption and not any(kw in caption_lower for kw in ["улучши", "improve", "devops", "docker", "qa"]):
+        bot.reply_to(
+            message,
+            f"📎 Файл `{doc.file_name}` получен.\n"
+            f"📋 Задача: *{caption}*\n"
+            f"🚀 Передаю в команду ИИ...",
+            parse_mode="Markdown"
+        )
+        try:
+            code = download_file_content(doc.file_id)
+            # Запускаем полный пайплайн с кодом файла как контекстом
+            task_with_context = (
+                f"{caption}\n\n"
+                f"Вот существующий код файла {doc.file_name} для контекста:\n\n{code[:30000]}"
+            )
+            threading.Thread(
+                target=run_team,
+                args=(task_with_context, message.chat.id),
+                daemon=True
+            ).start()
+        except Exception as e:
+            bot.reply_to(message, f"❌ Не удалось скачать файл: {e}")
+        return
+
+    # Режим анализа файла
+    if "улучши" in caption_lower or "improve" in caption_lower:
         mode, mode_label = "improve", "улучшение архитектуры"
-    elif "devops" in caption or "docker" in caption:
+    elif "devops" in caption_lower or "docker" in caption_lower:
         mode, mode_label = "devops", "генерация Docker конфигурации"
     else:
         mode, mode_label = "qa", "QA проверка"
