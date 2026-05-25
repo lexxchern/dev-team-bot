@@ -26,6 +26,18 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 # ─────────────────────────────────────────────
+# Папка для результатов
+# ─────────────────────────────────────────────
+
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+def rp(filename: str) -> str:
+    """Полный путь файла внутри results/"""
+    return os.path.join(RESULTS_DIR, filename)
+
+
+# ─────────────────────────────────────────────
 # DeepSeek API
 # ─────────────────────────────────────────────
 
@@ -232,7 +244,7 @@ def run_team(user_request: str, chat_id: int = None) -> None:
         filename_base = re.sub(r'[^\w]', '_', task['title'])
 
         # Сохраняем спецификацию
-        with open(f"{filename_base}_spec.txt", "w", encoding="utf-8") as f:
+        with open(rp(f"{filename_base}_spec.txt"), "w", encoding="utf-8") as f:
             f.write(spec)
 
         # Frontend — параллельный поток (если нужен)
@@ -242,9 +254,9 @@ def run_team(user_request: str, chat_id: int = None) -> None:
                 try:
                     notify("🎨 Frontend пишет интерфейс...")
                     html = agent_frontend(s)
-                    with open(f"{fb}_frontend.html", "w", encoding="utf-8") as fh:
+                    with open(rp(f"{fb}_frontend.html"), "w", encoding="utf-8") as fh:
                         fh.write(html)
-                    notify(f"✅ Frontend: сохранён {fb}_frontend.html ({len(html)} символов)")
+                    notify(f"✅ Frontend: сохранён results/{fb}_frontend.html ({len(html)} символов)")
                 except Exception as e:
                     notify(f"❌ Frontend: ошибка — {e}")
             frontend_thread = threading.Thread(target=run_frontend, daemon=True)
@@ -284,21 +296,21 @@ def run_team(user_request: str, chat_id: int = None) -> None:
             notify("⚠️ QA: не удалось пройти за 3 попытки. Сохраняю лучший вариант.")
 
         # Сохраняем код и QA-отчёт
-        with open(f"{filename_base}.py", "w", encoding="utf-8") as f:
+        with open(rp(f"{filename_base}.py"), "w", encoding="utf-8") as f:
             f.write(f"# Задача: {task['title']}\n# Описание: {task['description']}\n\n")
             f.write(code)
-        notify(f"💾 Код сохранён: {filename_base}.py")
+        notify(f"💾 Код сохранён: results/{filename_base}.py")
 
-        with open(f"{filename_base}_qa_report.txt", "w", encoding="utf-8") as f:
+        with open(rp(f"{filename_base}_qa_report.txt"), "w", encoding="utf-8") as f:
             f.write(qa_report)
 
         # DevOps
         notify("🐳 DevOps готовит конфигурацию развёртывания...")
         try:
             devops_result = agent_devops(code, task['title'])
-            with open(f"{filename_base}_deploy.txt", "w", encoding="utf-8") as f:
+            with open(rp(f"{filename_base}_deploy.txt"), "w", encoding="utf-8") as f:
                 f.write(devops_result)
-            notify(f"✅ DevOps: сохранён {filename_base}_deploy.txt")
+            notify(f"✅ DevOps: сохранён results/{filename_base}_deploy.txt")
         except Exception as e:
             notify(f"❌ DevOps: ошибка — {e}")
 
