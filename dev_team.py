@@ -229,6 +229,38 @@ def needs_frontend(user_request: str) -> bool:
     return any(kw in req_lower for kw in keywords)
 
 
+
+def agent_router(user_message: str) -> str:
+    """
+    🧭 Router: определяет тип запроса.
+    Возвращает 'task' (запустить пайплайн) или 'question' (просто ответить).
+    """
+    system = (
+        "Ты определяешь тип запроса пользователя. "
+        "Если пользователь хочет СОЗДАТЬ, РАЗРАБОТАТЬ, НАПИСАТЬ КОД, СДЕЛАТЬ бота/сайт/приложение/скрипт — ответь ТОЛЬКО словом: task "
+        "Если пользователь задаёт ВОПРОС, просит ОБЪЯСНИТЬ, СРАВНИТЬ, ПОСОВЕТОВАТЬ, ПОМОЧЬ разобраться — ответь ТОЛЬКО словом: question "
+        "Отвечай ТОЛЬКО одним словом: task или question"
+    )
+    try:
+        result = call_deepseek(system, user_message, max_tokens=10)
+        if "task" in result.lower():
+            return "task"
+        return "question"
+    except Exception:
+        return "task"  # по умолчанию запускаем пайплайн
+
+
+def agent_answer(user_message: str) -> str:
+    """
+    💬 Консультант: отвечает на вопросы без запуска пайплайна.
+    """
+    system = (
+        "Ты опытный Senior Software Engineer и технический консультант. "
+        "Отвечай чётко, по делу, на русском языке. "
+        "Используй примеры кода где уместно."
+    )
+    return call_deepseek(system, user_message, max_tokens=1500)
+
 def run_team(user_request: str, chat_id: int = None) -> None:
     """
     Главный пайплайн:
@@ -506,16 +538,26 @@ def handle_document(message):
 @bot.message_handler(func=lambda m: True)
 def handle_message(message):
     bot.send_chat_action(message.chat.id, "typing")
-    bot.reply_to(
-        message,
-        "🚀 Команда ИИ начала работу! Буду отправлять статусы по мере выполнения...",
-        parse_mode="Markdown"
-    )
-    threading.Thread(
-        target=run_team,
-        args=(message.text, message.chat.id),
-        daemon=True
-    ).start()
+
+    def process():
+        route = agent_router(message.text)
+        if route == "question":
+            try:
+                answer = agent_answer(message.text)
+                # Разбиваем длинный ответ на части если > 4000 символов
+                for i in range(0, len(answer), 4000):
+                    bot.send_message(message.chat.id, answer[i:i+4000])
+            except Exception as e:
+                bot.reply_to(message, f"❌ Ошибка: {e}")
+        else:
+            bot.reply_to(
+                message,
+                "🚀 Команда ИИ начала работу! Буду отправлять статусы по мере выполнения...",
+                parse_mode="Markdown"
+            )
+            run_team(message.text, message.chat.id)
+
+    threading.Thread(target=process, daemon=True).start()
 
 
 # ─────────────────────────────────────────────
