@@ -243,10 +243,6 @@ def run_team(user_request: str, chat_id: int = None) -> None:
 
         filename_base = re.sub(r'[^\w]', '_', task['title'])
 
-        # Сохраняем спецификацию
-        with open(rp(f"{filename_base}_spec.txt"), "w", encoding="utf-8") as f:
-            f.write(spec)
-
         # Frontend — параллельный поток (если нужен)
         frontend_thread = None
         if with_frontend:
@@ -254,9 +250,16 @@ def run_team(user_request: str, chat_id: int = None) -> None:
                 try:
                     notify("🎨 Frontend пишет интерфейс...")
                     html = agent_frontend(s)
-                    with open(rp(f"{fb}_frontend.html"), "w", encoding="utf-8") as fh:
+                    html_path = rp(f"{fb}_frontend.html")
+                    with open(html_path, "w", encoding="utf-8") as fh:
                         fh.write(html)
-                    notify(f"✅ Frontend: сохранён results/{fb}_frontend.html ({len(html)} символов)")
+                    notify(f"✅ Frontend готов: {fb}_frontend.html ({len(html)} символов)")
+                    if chat_id:
+                        try:
+                            with open(html_path, "rb") as fh:
+                                bot.send_document(chat_id, fh, caption=f"🎨 Frontend: {fb}")
+                        except Exception as e:
+                            notify(f"⚠️ Не удалось отправить html: {e}")
                 except Exception as e:
                     notify(f"❌ Frontend: ошибка — {e}")
             frontend_thread = threading.Thread(target=run_frontend, daemon=True)
@@ -296,23 +299,30 @@ def run_team(user_request: str, chat_id: int = None) -> None:
             notify("⚠️ QA: не удалось пройти за 3 попытки. Сохраняю лучший вариант.")
 
         # Сохраняем код и QA-отчёт
-        with open(rp(f"{filename_base}.py"), "w", encoding="utf-8") as f:
+        py_path = rp(f"{filename_base}.py")
+        with open(py_path, "w", encoding="utf-8") as f:
             f.write(f"# Задача: {task['title']}\n# Описание: {task['description']}\n\n")
             f.write(code)
-        notify(f"💾 Код сохранён: results/{filename_base}.py")
+        notify(f"💾 Код готов: {filename_base}.py")
 
-        with open(rp(f"{filename_base}_qa_report.txt"), "w", encoding="utf-8") as f:
+        qa_path = rp(f"{filename_base}_qa_report.txt")
+        with open(qa_path, "w", encoding="utf-8") as f:
             f.write(qa_report)
 
-        # DevOps
-        notify("🐳 DevOps готовит конфигурацию развёртывания...")
-        try:
-            devops_result = agent_devops(code, task['title'])
-            with open(rp(f"{filename_base}_deploy.txt"), "w", encoding="utf-8") as f:
-                f.write(devops_result)
-            notify(f"✅ DevOps: сохранён results/{filename_base}_deploy.txt")
-        except Exception as e:
-            notify(f"❌ DevOps: ошибка — {e}")
+        # Отправляем файлы в Telegram
+        if chat_id:
+            try:
+                with open(py_path, "rb") as f:
+                    bot.send_document(chat_id, f, caption=f"💻 Код: {task['title']}")
+            except Exception as e:
+                notify(f"⚠️ Не удалось отправить .py: {e}")
+            try:
+                with open(qa_path, "rb") as f:
+                    bot.send_document(chat_id, f, caption=f"🔍 QA отчёт: {task['title']}")
+            except Exception as e:
+                notify(f"⚠️ Не удалось отправить qa_report: {e}")
+
+
 
         # Ждём завершения frontend если он запускался
         if frontend_thread:
