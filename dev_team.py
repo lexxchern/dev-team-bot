@@ -1,6 +1,6 @@
 """
 🤖 AI Dev Team — Команда ИИ-агентов на базе DeepSeek
-PM → Architect → Backend Dev → QA → DevOps → (опционально Frontend)
+PM → Architect → Designer → Frontend → Backend Dev → QA → DevOps
 
 v3 улучшения:
   - agent_frontend интегрирован в пайплайн (ключевое слово "фронтенд"/"frontend" в запросе)
@@ -147,6 +147,26 @@ def agent_architect(task: dict) -> str:
     return result[:60000]
 
 
+
+def agent_designer(task: dict, spec: str) -> str:
+    """🎨 UI/UX Designer: дизайн-концепция и ТЗ для Frontend."""
+    system = (
+        "Ты Senior UI/UX Designer. "
+        "На основе задачи и технической спецификации создай детальную дизайн-концепцию: "
+        "1. Цветовая палитра (HEX коды) "
+        "2. Типографика (шрифты, размеры, веса) "
+        "3. Компоненты UI (кнопки, карточки, формы, иконки) "
+        "4. Макет страниц/экранов (описание layout) "
+        "5. UX-flow (как пользователь взаимодействует с интерфейсом) "
+        "6. Готовые CSS-переменные для реализации. "
+        "Пиши чётко, с конкретными значениями — это ТЗ для Frontend разработчика."
+    )
+    return call_deepseek(
+        system,
+        f"Задача: {task['title']}\nОписание: {task['description']}\n\nСпецификация:\n{spec[:30000]}",
+        max_tokens=2000
+    )
+
 def agent_backend(spec: str) -> str:
     """💻 Backend Developer: рабочий Python-код."""
     system = (
@@ -204,7 +224,7 @@ def agent_devops(code: str, task_title: str) -> str:
 def needs_frontend(user_request: str) -> bool:
     """Определяет нужен ли фронтенд по ключевым словам в запросе."""
     keywords = ["фронтенд", "frontend", "интерфейс", "html", "ui", "веб", "web",
-                "сайт", "страниц", "форм", "кнопк", "клавиатур"]
+                "сайт", "страниц", "форм", "кнопк", "клавиатур", "дизайн", "design"]
     req_lower = user_request.lower()
     return any(kw in req_lower for kw in keywords)
 
@@ -246,10 +266,15 @@ def run_team(user_request: str, chat_id: int = None) -> None:
         # Frontend — параллельный поток (если нужен)
         frontend_thread = None
         if with_frontend:
-            def run_frontend(s=spec, fb=filename_base):
+            def run_frontend(s=spec, t=task, fb=filename_base):
                 try:
-                    notify("🎨 Frontend пишет интерфейс...")
-                    html = agent_frontend(s)
+                    notify("🎨 Designer создаёт дизайн-концепцию...")
+                    design = agent_designer(t, s)
+                    notify(f"✅ Designer: концепция готова ({len(design)} символов)")
+                    # Передаём дизайн-концепцию во Frontend
+                    spec_with_design = s + "\n\n--- Дизайн-концепция от Designer ---\n" + design
+                    notify("🖥️ Frontend реализует интерфейс по дизайну...")
+                    html = agent_frontend(spec_with_design)
                     html_path = rp(f"{fb}_frontend.html")
                     with open(html_path, "w", encoding="utf-8") as fh:
                         fh.write(html)
@@ -400,7 +425,7 @@ def cmd_start(message):
         "👥 *AI Dev Team на базе DeepSeek* v3\n\n"
         "Команда агентов разработает ваш проект:\n"
         "👨‍💼 PM → 📐 Architect → 💻 Backend → 🔍 QA → 🐳 DevOps\n"
-        "🎨 Frontend — подключается автоматически если нужен\n\n"
+        "🎨 Designer + Frontend — подключаются автоматически если нужен интерфейс\n\n"
         "📎 *Прикрепите .py файл* для анализа:\n"
         "• Без подписи — QA проверит баги\n"
         "• Подпись `улучши` — Architect предложит улучшения\n"
