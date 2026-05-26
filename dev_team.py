@@ -350,6 +350,7 @@ def run_team(user_request: str, chat_id: int = None) -> None:
 
         # Backend + QA цикл
         code = ""
+        code_clean = ""
         qa_report = ""
         qa_passed = False
         final_iteration = 1
