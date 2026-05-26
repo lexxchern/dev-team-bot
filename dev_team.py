@@ -275,6 +275,7 @@ def run_team(user_request: str, chat_id: int = None) -> None:
             throttled_send(chat_id, text)
 
     with_frontend = needs_frontend(user_request)
+    result_files = []  # Список файлов для финальной отправки
 
     notify("👨‍💼 PM анализирует запрос и декомпозирует задачи...")
     tasks = agent_pm(user_request)
@@ -311,12 +312,8 @@ def run_team(user_request: str, chat_id: int = None) -> None:
                     with open(html_path, "w", encoding="utf-8") as fh:
                         fh.write(html)
                     notify(f"✅ Frontend готов: {fb}_frontend.html ({len(html)} символов)")
-                    if chat_id:
-                        try:
-                            with open(html_path, "rb") as fh:
-                                bot.send_document(chat_id, fh, caption=f"🎨 Frontend: {fb}")
-                        except Exception as e:
-                            notify(f"⚠️ Не удалось отправить html: {e}")
+                    # Запоминаем html для финальной отправки
+                    result_files.append((html_path, f"🎨 Frontend: {fb}"))
                 except Exception as e:
                     notify(f"❌ Frontend: ошибка — {e}")
             frontend_thread = threading.Thread(target=run_frontend, daemon=True)
@@ -366,18 +363,9 @@ def run_team(user_request: str, chat_id: int = None) -> None:
         with open(qa_path, "w", encoding="utf-8") as f:
             f.write(qa_report)
 
-        # Отправляем файлы в Telegram
-        if chat_id:
-            try:
-                with open(py_path, "rb") as f:
-                    bot.send_document(chat_id, f, caption=f"💻 Код: {task['title']}")
-            except Exception as e:
-                notify(f"⚠️ Не удалось отправить .py: {e}")
-            try:
-                with open(qa_path, "rb") as f:
-                    bot.send_document(chat_id, f, caption=f"🔍 QA отчёт: {task['title']}")
-            except Exception as e:
-                notify(f"⚠️ Не удалось отправить qa_report: {e}")
+        # Запоминаем файлы для отправки в конце
+        result_files.append((py_path, f"💻 {task['title']}"))
+        result_files.append((qa_path, f"🔍 QA: {task['title']}"))
 
 
 
@@ -388,8 +376,17 @@ def run_team(user_request: str, chat_id: int = None) -> None:
         if task != tasks[-1]:
             time.sleep(2)
 
-    notify("\n🎉 Все задачи выполнены командой ИИ!\n"
-           "Файлы сохранены в текущую директорию.")
+    notify("\n🎉 Все задачи выполнены! Отправляю результаты...")
+
+    if chat_id and result_files:
+        for file_path, caption in result_files:
+            try:
+                with open(file_path, "rb") as f:
+                    bot.send_document(chat_id, f, caption=caption)
+                time.sleep(0.5)
+            except Exception as e:
+                notify(f"⚠️ Не удалось отправить {caption}: {e}")
+        notify(f"✅ Готово! Отправлено {len(result_files)} файлов.")
 
 
 # ─────────────────────────────────────────────
