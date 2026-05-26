@@ -230,6 +230,27 @@ def needs_frontend(user_request: str) -> bool:
 
 
 
+
+def agent_summary(task_title: str, spec: str, qa_report: str, iterations: int) -> str:
+    """
+    📝 Summary: человеческое описание что было сделано и исправлено.
+    """
+    system = (
+        "Ты технический писатель. Напиши краткий отчёт на русском языке (10-20 строк): "
+        "1. Что было сделано (главные функции и решения) "
+        "2. Какие проблемы нашёл QA и что было исправлено "
+        "3. Как запустить код (зависимости, команда запуска) "
+        "Пиши просто и понятно, без технического жаргона."
+    )
+    qa_info = qa_report if qa_report and qa_report.strip().upper() != "OK" else "Замечаний не было."
+    prompt = (
+        f"Задача: {task_title}\n"
+        f"Итераций QA: {iterations}\n"
+        f"Замечания QA: {qa_info[:2000]}\n"
+        f"Спецификация (кратко): {spec[:1000]}"
+    )
+    return call_deepseek(system, prompt, max_tokens=800)
+
 def agent_router(user_message: str) -> str:
     """
     🧭 Router: определяет тип запроса.
@@ -323,6 +344,7 @@ def run_team(user_request: str, chat_id: int = None) -> None:
         code = ""
         qa_report = ""
         qa_passed = False
+        final_iteration = 1
 
         for iteration in range(1, 4):
             notify(f"💻 Backend пишет код (попытка {iteration}/3)...")
@@ -343,6 +365,7 @@ def run_team(user_request: str, chat_id: int = None) -> None:
             if is_qa_ok(qa_report):
                 notify("✅ QA: код принят!")
                 qa_passed = True
+                final_iteration = iteration
                 break
             else:
                 notify(f"❌ QA нашёл замечания:\n{qa_report[:600]}")
@@ -357,15 +380,23 @@ def run_team(user_request: str, chat_id: int = None) -> None:
         with open(py_path, "w", encoding="utf-8") as f:
             f.write(f"# Задача: {task['title']}\n# Описание: {task['description']}\n\n")
             f.write(code)
-        notify(f"💾 Код готов: {filename_base}.py")
+        notify(f"💾 Код готов, формирую отчёт...")
 
-        qa_path = rp(f"{filename_base}_qa_report.txt")
-        with open(qa_path, "w", encoding="utf-8") as f:
-            f.write(qa_report)
+        # Генерируем человеческий отчёт
+        try:
+            summary = agent_summary(task['title'], spec, qa_report, final_iteration)
+        except Exception:
+            summary = f"Задача '{task['title']}' выполнена за {final_iteration} итерации QA."
 
-        # Запоминаем файлы для отправки в конце
-        result_files.append((py_path, f"💻 {task['title']}"))
-        result_files.append((qa_path, f"🔍 QA: {task['title']}"))
+        summary_path = rp(f"{filename_base}_отчёт.txt")
+        with open(summary_path, "w", encoding="utf-8") as f:
+            f.write(f"Задача: {task['title']}\n")
+            f.write("=" * 50 + "\n\n")
+            f.write(summary)
+
+        # Запоминаем только .py и отчёт
+        result_files.append((py_path, f"💻 Код: {task['title']}"))
+        result_files.append((summary_path, f"📝 Отчёт: {task['title']}"))
 
 
 
