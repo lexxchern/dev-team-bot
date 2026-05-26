@@ -315,7 +315,10 @@ def run_team(user_request: str, chat_id: int = None) -> None:
             continue
         notify(f"✅ Architect: спецификация готова ({len(spec)} символов)")
 
-        filename_base = re.sub(r'[^\w]', '_', task['title'])
+        # Короткое имя файла: первые 3 слова + порядковый номер задачи
+        words = re.sub(r'[^\w\s]', '', task['title']).split()[:3]
+        short_name = '_'.join(words) + f"_{task['id']}"
+        filename_base = short_name.lower()
 
         # Frontend — параллельный поток (если нужен)
         frontend_thread = None
@@ -329,9 +332,14 @@ def run_team(user_request: str, chat_id: int = None) -> None:
                     spec_with_design = s + "\n\n--- Дизайн-концепция от Designer ---\n" + design
                     notify("🖥️ Frontend реализует интерфейс по дизайну...")
                     html = agent_frontend(spec_with_design)
+                    # Убираем markdown-обёртки если модель их добавила
+                    html_clean = html.strip()
+                    if html_clean.startswith("```"):
+                        html_clean = re.sub(r'^```[a-z]*\n?', '', html_clean)
+                        html_clean = re.sub(r'```$', '', html_clean).strip()
                     html_path = rp(f"{fb}_frontend.html")
                     with open(html_path, "w", encoding="utf-8") as fh:
-                        fh.write(html)
+                        fh.write(html_clean)
                     notify(f"✅ Frontend готов: {fb}_frontend.html ({len(html)} символов)")
                     # Запоминаем html для финальной отправки
                     result_files.append((html_path, f"🎨 Frontend: {fb}"))
@@ -376,16 +384,36 @@ def run_team(user_request: str, chat_id: int = None) -> None:
             notify("⚠️ QA: не удалось пройти за 3 попытки. Сохраняю лучший вариант.")
 
         # Сохраняем код и QA-отчёт
+        # Проверяем что код не пустой перед сохранением
+        if not code_clean or len(code_clean) < 10:
+            notify(f"⚠️ Код для задачи '{task['title']}' пустой — пропускаю.")
+            continue
+
+        # Убираем markdown-обёртки если модель их добавила
+        code_clean = code.strip()
+        if code_clean.startswith("```"):
+            code_clean = re.sub(r'^```[a-z]*\n?', '', code_clean)
+            code_clean = re.sub(r'```$', '', code_clean).strip()
+
         py_path = rp(f"{filename_base}.py")
         with open(py_path, "w", encoding="utf-8") as f:
             f.write(f"# Задача: {task['title']}\n# Описание: {task['description']}\n\n")
-            f.write(code)
-        notify(f"💾 Код готов, формирую отчёт...")
+            f.write(code_clean)
+
+        # Проверяем что файл реально записался
+        if os.path.getsize(py_path) < 10:
+            notify(f"⚠️ Файл {filename_base}.py записался пустым — пропускаю.")
+            continue
+
+        notify(f"💾 Код готов ({len(code_clean)} символов), формирую отчёт...")
 
         # Генерируем человеческий отчёт
         try:
             summary = agent_summary(task['title'], spec, qa_report, final_iteration)
-        except Exception:
+        except Exception as e:
+            summary = f"Задача '{task['title']}' выполнена за {final_iteration} итерации QA.\nОшибка генерации отчёта: {e}"
+
+        if not summary or len(summary.strip()) < 5:
             summary = f"Задача '{task['title']}' выполнена за {final_iteration} итерации QA."
 
         summary_path = rp(f"{filename_base}_отчёт.txt")
@@ -407,17 +435,49 @@ def run_team(user_request: str, chat_id: int = None) -> None:
         if task != tasks[-1]:
             time.sleep(2)
 
-    notify("\n🎉 Все задачи выполнены! Отправляю результаты...")
+    # Собираем всё в один итоговый файл каждого типа
+    notify("\n🎉 Все задачи выполнены! Собираю итоговые файлы...")
 
-    if chat_id and result_files:
-        for file_path, caption in result_files:
-            try:
-                with open(file_path, "rb") as f:
-                    bot.send_document(chat_id, f, caption=caption)
-                time.sleep(0.5)
-            except Exception as e:
-                notify(f"⚠️ Не удалось отправить {caption}: {e}")
-        notify(f"✅ Готово! Отправлено {len(result_files)} файлов.")
+    # Объединяем весь код в один .py
+    all_code_path = rp("итог_код.py")
+    all_report_path = rp("итог_отчёт.txt")
+
+    try:
+        with open(all_code_path, "w", encoding="utf-8") as f_code, \
+             open(all_report_path, "w", encoding="utf-8") as f_rep:
+            for file_path, caption in result_files:
+                if file_path.endswith(".py"):
+                    f_code.write(f"# {'='*50}\n# {caption}\n# {'='*50}\n\n")
+                    f_code.write(open(file_path, encoding="utf-8").read())
+                    f_code.write("\n\n")
+                elif file_path.endswith(".txt"):
+                    f_rep.write(open(file_path, encoding="utf-8").read())
+                    f_rep.write("\n\n")
+
+        if chat_id:
+            # Отправляем только 2 файла: код + отчёт
+            for path, cap in [(all_code_path, "💻 Итоговый код"), (all_report_path, "📝 Итоговый отчёт")]:
+                try:
+                    with open(path, "rb") as f:
+                        bot.send_document(chat_id, f, caption=cap)
+                    time.sleep(0.5)
+                except Exception as e:
+                    notify(f"⚠️ {cap}: {e}")
+
+            # HTML только если был фронтенд
+            html_files = [(p, c) for p, c in result_files if p.endswith(".html")]
+            if html_files:
+                # Берём последний html
+                path, cap = html_files[-1]
+                try:
+                    with open(path, "rb") as f:
+                        bot.send_document(chat_id, f, caption="🎨 Интерфейс")
+                except Exception as e:
+                    notify(f"⚠️ HTML: {e}")
+
+        notify("✅ Готово! Отправлено максимум 3 файла.")
+    except Exception as e:
+        notify(f"❌ Ошибка сборки итогов: {e}")
 
 
 # ─────────────────────────────────────────────
