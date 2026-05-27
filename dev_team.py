@@ -148,6 +148,25 @@ def agent_architect(task: dict) -> str:
 
 
 
+
+def extract_bot_structure(code: str) -> str:
+    """Извлекает реальные кнопки и команды из кода бота."""
+    import re
+    buttons = set()
+    commands = set()
+    emoji_chars = ["✍","❓","💆","📋","📅","🤖","🧴","💬","🛍","📷","🔄","◀","✅","❌","👩","👥","💎","💚","💛","🩺","✨","💇","1️","2️","🔙","🏠"]
+    for m in re.finditer(r'"([^"]{2,40})"', code):
+        text = m.group(1)
+        if any(e in text for e in emoji_chars):
+            buttons.add(text)
+    for m in re.finditer(r'commands=\["([^"]+)"\]', code):
+        commands.add("/" + m.group(1))
+    result = "РЕАЛЬНЫЕ КНОПКИ БОТА (использовать ТОЛЬКО эти тексты):\n"
+    result += "\n".join(f"  - {b}" for b in sorted(buttons))
+    result += "\n\nКОМАНДЫ:\n"
+    result += "\n".join(f"  - {c}" for c in sorted(commands))
+    return result
+
 def agent_designer(task: dict, spec: str) -> str:
     """🎨 UI/UX Designer: дизайн-система и список ВСЕХ экранов."""
     system = (
@@ -155,11 +174,12 @@ def agent_designer(task: dict, spec: str) -> str:
         "1. Цветовая палитра (HEX коды) "
         "2. Типографика (шрифты, размеры, веса) "
         "3. Компоненты UI (кнопки primary/secondary/danger, карточки, формы, инпуты, бейджи) "
-        "4. ПЕРЕЧИСЛИ ВСЕ ЭКРАНЫ которые нужно нарисовать: главное меню, список услуг, "
-        "выбор мастера, календарь, выбор времени, форма данных, подтверждение, успех, ошибки, профиль, история. "
-        "5. Для каждого экрана опиши layout, кнопки, состояния. "
+        "4. ВАЖНО: если в спецификации есть существующий код бота — внимательно изучи ВСЕ его кнопки, "
+        "команды (/start, /menu и т.д.), разделы, тексты сообщений. Перечисли ВСЕ реальные экраны бота "
+        "с конкретными названиями кнопок и разделов ИЗ КОДА, а не выдумывай свои. "
+        "5. Для каждого экрана опиши layout, кнопки (с их реальными названиями из кода), состояния. "
         "6. CSS-переменные. "
-        "Пиши конкретно — это ТЗ для Frontend разработчика, который нарисует ВСЕ экраны."
+        "Пиши конкретно — это ТЗ для Frontend разработчика, который нарисует ВСЕ экраны именно этого бота."
     )
     return call_deepseek(
         system,
@@ -186,8 +206,9 @@ def agent_frontend(spec: str) -> str:
         "Нарисуй ВСЕ экраны проекта на ОДНОЙ HTML странице — каждый экран как отдельная карточка-mockup "
         "(имитация телефона) с заголовком над карточкой. "
         "Разложи экраны сеткой grid 2-3 в ряд, чтобы все были видны сразу. "
-        "Покажи: главное меню, список услуг с карточками, выбор мастера, календарь с датами, "
-        "сетку времени, форму ввода данных, экран подтверждения, экран успеха, экран ошибки. "
+        "КРИТИЧЕСКИ ВАЖНО: если в спецификации есть код существующего бота — используй ТОЛЬКО его реальные кнопки, "
+        "команды, тексты сообщений, разделы. НЕ выдумывай свои названия кнопок — бери их прямо из кода. "
+        "Названия кнопок и разделов на макетах должны быть слово в слово как в коде бота. "
         "Используй ВСЕ CSS-переменные и компоненты из дизайн-системы. "
         "Каждая карточка должна быть детально нарисована с реальными кнопками, текстом, иконками. "
         "Это статичный showcase всех экранов — НЕ интерактивный, просто полные макеты. "
@@ -292,8 +313,8 @@ def run_team(user_request: str, chat_id: int = None) -> None:
     """
     Главный пайплайн:
     PM → Architect → Backend (QA-цикл до 3 раз) → DevOps
-                  ↘ Frontend (если нужен, параллельно)
-    Сохраняет: .py, _frontend.html, _spec.txt, _qa_report.txt, _deploy.txt
+                  ↘ Designer → Frontend (если нужен, параллельно)
+    Если в user_request есть код существующего бота — передаём его всем агентам как контекст.
     """
 
     def notify(text: str) -> None:
@@ -301,7 +322,18 @@ def run_team(user_request: str, chat_id: int = None) -> None:
         if chat_id:
             throttled_send(chat_id, text)
 
-    with_frontend = needs_frontend(user_request)
+    # Извлекаем существующий код пользователя если есть
+    existing_code = ""
+    code_marker = "Вот существующий код файла"
+    if code_marker in user_request:
+        parts = user_request.split(code_marker, 1)
+        if len(parts) == 2:
+            existing_code = parts[1]
+            user_request_clean = parts[0].strip()
+            notify(f"📎 Обнаружен код существующего проекта ({len(existing_code)} символов) — передаю всем агентам.")
+            user_request = user_request_clean
+
+    with_frontend = needs_frontend(user_request) or bool(existing_code)
     result_files = []  # Список файлов для финальной отправки
 
     notify("👨‍💼 PM анализирует запрос и декомпозирует задачи...")
@@ -329,13 +361,19 @@ def run_team(user_request: str, chat_id: int = None) -> None:
         # Frontend — параллельный поток (если нужен)
         frontend_thread = None
         if with_frontend:
-            def run_frontend(s=spec, t=task, fb=filename_base):
+            def run_frontend(s=spec, t=task, fb=filename_base, ec=existing_code):
                 try:
                     notify("🎨 Designer создаёт дизайн-концепцию...")
-                    design = agent_designer(t, s)
+                    # Передаём существующий код в Designer
+                    spec_for_design = s
+                    if ec:
+                        spec_for_design = s + "\n\n--- Существующий код бота (используй его кнопки, команды и разделы) ---\n" + ec[:25000]
+                    design = agent_designer(t, spec_for_design)
                     notify(f"✅ Designer: концепция готова ({len(design)} символов)")
-                    # Передаём дизайн-концепцию во Frontend
+                    # Передаём дизайн + код во Frontend
                     spec_with_design = s + "\n\n--- Дизайн-концепция от Designer ---\n" + design
+                    if ec:
+                        spec_with_design += "\n\n--- ОБЯЗАТЕЛЬНО используй кнопки, команды и разделы из этого кода ---\n" + ec[:25000]
                     notify("🖥️ Frontend реализует интерфейс по дизайну...")
                     html = agent_frontend(spec_with_design)
                     # Убираем markdown-обёртки если модель их добавила
