@@ -385,16 +385,16 @@ def run_team(user_request: str, chat_id: int = None) -> None:
             notify("⚠️ QA: не удалось пройти за 3 попытки. Сохраняю лучший вариант.")
 
         # Сохраняем код и QA-отчёт
-        # Проверяем что код не пустой перед сохранением
-        if not code_clean or len(code_clean) < 10:
-            notify(f"⚠️ Код для задачи '{task['title']}' пустой — пропускаю.")
-            continue
-
         # Убираем markdown-обёртки если модель их добавила
         code_clean = code.strip()
         if code_clean.startswith("```"):
             code_clean = re.sub(r'^```[a-z]*\n?', '', code_clean)
             code_clean = re.sub(r'```$', '', code_clean).strip()
+
+        # Проверяем что код не пустой ПОСЛЕ очистки
+        if not code_clean or len(code_clean) < 10:
+            notify(f"⚠️ Код для задачи '{task['title']}' пустой — пропускаю.")
+            continue
 
         py_path = rp(f"{filename_base}.py")
         with open(py_path, "w", encoding="utf-8") as f:
